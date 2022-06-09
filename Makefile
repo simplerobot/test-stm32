@@ -3,7 +3,6 @@ GITHUB_DEPS += simplerobot/hw-test-agent
 GITHUB_DEPS += simplerobot/rlm3-hardware
 include ../build-scripts/build/release/include.make
 
-# TOOLCHAIN_PATH = /opt/gcc-arm-11.2-2022.02-x86_64-arm-none-eabi/bin/arm-none-eabi-
 TOOLCHAIN_PATH = /opt/gcc-arm-none-eabi-7-2018-q2-update/bin/arm-none-eabi-
 
 BUILD_DIR = build
