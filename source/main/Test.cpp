@@ -4,6 +4,12 @@
 #include <exception>
 #include <cmsis_os.h>
 #include <cstring>
+#include "logger.h"
+#include <cstdarg>
+#include <cctype>
+
+
+LOGGER_ZONE(TEST);
 
 
 TestCaseListItem* TestCaseListItem::g_head = nullptr;
@@ -13,9 +19,114 @@ static bool g_test_failure = false;
 TaskHandle_t g_testing_thread_id = 0;
 
 
+static void ITM_SendCharSafe(char c)
+{
+	if (isprint(c))
+		ITM_SendChar(c);
+	else
+		ITM_SendChar('?');
+}
+
+static void ITM_SendString(const char* str)
+{
+  if (str == NULL)
+	  str = "(null)";
+  while (*str != 0)
+	  ITM_SendCharSafe(*(str++));
+}
+
+static void ITM_SendUInt(uint32_t x)
+{
+  char buffer[10];
+  int count = 0;
+  do
+  {
+    buffer[count++] = '0' + (x % 10);
+    x /= 10;
+  } while (x != 0);
+  for (int i = 0; i < count; i++)
+    ITM_SendChar(buffer[count - i - 1]);
+}
+
+static void ITM_SendInt(int32_t x)
+{
+  if (x < 0)
+  {
+    ITM_SendChar('-');
+    x = -x;
+  }
+  ITM_SendUInt((uint32_t)x);
+}
+
+static void ITM_SendHex(uint32_t x)
+{
+  const char* HEX_DIGITS = "0123456789abcdef";
+  size_t i = 1;
+  while (i < 8 && ((x >> (32 - 4 * i)) & 0x0F) == 0)
+    i++;
+  for (; i <= 8; i++)
+    ITM_SendChar(HEX_DIGITS[(x >> (32 - 4 * i)) & 0x0F]);
+}
+
+static void ITM_VFormat(const char* format, va_list args)
+{
+	while (*format != 0)
+	{
+		char c = *(format++);
+		if (c == '%')
+		{
+			char f = *(format++);
+			if (f == 's')
+				ITM_SendString(va_arg(args, const char*));
+			else if (f == 'd')
+				ITM_SendInt(va_arg(args, int));
+			else if (f == 'u')
+				ITM_SendUInt(va_arg(args, unsigned int));
+			else if (f == 'x')
+				ITM_SendHex(va_arg(args, unsigned int));
+			else if (f == 'c')
+				ITM_SendCharSafe((char)va_arg(args, int));
+			else if (f == '%')
+				ITM_SendChar(f);
+			else
+			{
+				ITM_SendString("[unsupported format ");
+				ITM_SendCharSafe(f);
+				ITM_SendChar(']');
+				return;
+			}
+		}
+		else
+			ITM_SendCharSafe(c);
+	}
+}
+
+static void ITM_Format(const char* format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	ITM_VFormat(format, args);
+	va_end(args);
+}
+
+extern void logger_format_message(LoggerLevel level, const char* zone, const char* format, ...)
+{
+	ITM_SendString(ToString(level));
+	ITM_SendChar(' ');
+	ITM_SendString(zone);
+	ITM_SendChar(' ');
+
+	va_list args;
+	va_start(args, format);
+	ITM_VFormat(format, args);
+	va_end(args);
+
+	ITM_SendChar('\n');
+}
+
 static void terminate_fn()
 {
-	ITM_Format("terminate\n");
+	LOG_FATAL("terminate called");
 	while (1);
 }
 
@@ -26,7 +137,6 @@ namespace __cxxabiv1 {
 extern "C" void RLM3_Main(void)
 {
 	TestCaseListItem::RunAll();
-	ITM_Format("EOT FAIL\n");
 }
 
 class AssertFailedException
@@ -69,11 +179,13 @@ bool TestCaseListItem::Run()
 	catch (const std::exception& e)
 	{
 		const char* name = typeid(e).name();
-		ITM_Format("FAILED - Test failed with exception %s.  Error: %s\n", name, e.what());
+		ITM_Format("FAILED - Test failed with exception %s.  Error: %s", name, e.what());
+		ITM_SendChar('\n');
 	}
 	catch (...)
 	{
-		ITM_Format("FAILED - Test failed with unknown exception.\n");
+		ITM_Format("FAILED - Test failed with unknown exception.");
+		ITM_SendChar('\n');
 	}
 	g_test_depth--;
 	g_test_failure = false;
@@ -84,14 +196,16 @@ bool TestCaseListItem::Run()
 
 bool TestCaseListItem::RunAll()
 {
-	ITM_Format("== RUNNING TEST CASES ==\n");
+	ITM_Format("== RUNNING TEST CASES ==");
+	ITM_SendChar('\n');
 
 	size_t total_test_count = 0;
 	size_t passed_test_count = 0;
 
 	for (TestCaseListItem* current_test = g_head; current_test != nullptr; current_test = current_test->m_next)
 	{
-		ITM_Format("=== TEST: %s ===\n", current_test->m_name);
+		ITM_Format("=== TEST: %s ===", current_test->m_name);
+		ITM_SendChar('\n');
 
 		total_test_count++;
 
@@ -101,23 +215,33 @@ bool TestCaseListItem::RunAll()
 		}
 		else
 		{
-			ITM_Format("=== TEST FAILED: %s File '%s' line %d ===\n", current_test->m_name, current_test->m_file, current_test->m_line);
+			ITM_Format("=== TEST FAILED: %s File '%s' line %d ===", current_test->m_name, current_test->m_file, current_test->m_line);
+			ITM_SendChar('\n');
 		}
 	}
 
-	ITM_Format("== TEST SUMMARY ==\n");
-	ITM_Format("%d Total Tests\n", total_test_count);
-	ITM_Format("%d Tests Passed\n", passed_test_count);
+	ITM_Format("== TEST SUMMARY ==");
+	ITM_SendChar('\n');
+	ITM_Format("%d Total Tests", total_test_count);
+	ITM_SendChar('\n');
+	ITM_Format("%d Tests Passed", passed_test_count);
+	ITM_SendChar('\n');
 	if (total_test_count == passed_test_count)
 	{
-		ITM_Format("== TESTS PASSED ==\n");
-		ITM_Format("EOT PASS\n");
+		ITM_Format("== TESTS PASSED ==");
+		ITM_SendChar('\n');
+		ITM_Format("EOT PASS");
+		ITM_SendChar('\n');
 		return true;
 	}
 	else
 	{
-		ITM_Format("%d Failed Tests\n", total_test_count - passed_test_count);
-		ITM_Format("== TESTS FAILED ==\n");
+		ITM_Format("%d Failed Tests", total_test_count - passed_test_count);
+		ITM_SendChar('\n');
+		ITM_Format("== TESTS FAILED ==");
+		ITM_SendChar('\n');
+		ITM_Format("EOT FAIL");
+		ITM_SendChar('\n');
 		return false;
 	}
 }
@@ -177,7 +301,8 @@ extern void NotifyAssertFailed(const char* file, long line, const char* function
 	va_start(args, message);
 	ITM_Format("%s '", failure_type);
 	ITM_VFormat(message, args);
-	ITM_Format("' %s %s:%d\n", function, ShortFileName(file), line);
+	ITM_Format("' %s %s:%d", function, ShortFileName(file), line);
+	ITM_SendChar('\n');
 
 	if (throw_error)
 	{
@@ -185,27 +310,26 @@ extern void NotifyAssertFailed(const char* file, long line, const char* function
 	}
 }
 
+extern "C" void __cxa_pure_virtual()
+{
+	ITM_Format("pure virtual\n");
+	while(1);
+}
 
-//extern "C" void __cxa_pure_virtual()
-//{
-//	ITM_Format("pure virtual\n");
-//	while(1);
-//}
-//
-//void* operator new(size_t size)
-//{
-//	return pvPortMalloc(size);
-//}
-//
-//void operator delete(void* ptr)
-//{
-//	if (ptr != nullptr)
-//		vPortFree(ptr);
-//}
+void* operator new(size_t size)
+{
+	return pvPortMalloc(size);
+}
+
+void operator delete(void* ptr)
+{
+	if (ptr != nullptr)
+		vPortFree(ptr);
+}
 
 extern "C" void _exit(int result)
 {
-	ITM_Format("exit\n");
+	LOG_FATAL("exit called");
 	while(1);
 }
 

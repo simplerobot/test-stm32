@@ -1,6 +1,7 @@
 GITHUB_DEPS += simplerobot/build-scripts
 GITHUB_DEPS += simplerobot/hw-test-agent
 GITHUB_DEPS += simplerobot/rlm3-hardware
+GITHUB_DEPS += simplerobot/logger
 include ../build-scripts/build/release/include.make
 
 TOOLCHAIN_PATH = /opt/gcc-arm-none-eabi-7-2018-q2-update/bin/arm-none-eabi-
@@ -31,7 +32,8 @@ DEFINES = \
 	
 INCLUDES = \
 	-I$(LIBRARY_BUILD_DIR) \
-	-I$(PKG_RLM3_HARDWARE_DIR)
+	-I$(PKG_RLM3_HARDWARE_DIR) \
+	-I$(PKG_LOGGER_DIR)
 
 SOURCE_DIR = source
 MAIN_SOURCE_DIR = $(SOURCE_DIR)/main
@@ -39,12 +41,12 @@ TEST_SOURCE_DIR = $(SOURCE_DIR)/test
 
 LIBRARY_FILES = $(notdir $(wildcard $(MAIN_SOURCE_DIR)/*))
 
-TEST_SOURCE_DIRS = $(MAIN_SOURCE_DIR) $(TEST_SOURCE_DIR) $(PKG_RLM3_HARDWARE_DIR)
+TEST_SOURCE_DIRS = $(MAIN_SOURCE_DIR) $(TEST_SOURCE_DIR) $(PKG_RLM3_HARDWARE_DIR) $(PKG_LOGGER_DIR)
 TEST_SOURCE_FILES = $(notdir $(wildcard $(TEST_SOURCE_DIRS:%=%/*.c) $(TEST_SOURCE_DIRS:%=%/*.cpp) $(TEST_SOURCE_DIRS:%=%/*.s)))
 TEST_O_FILES = $(addsuffix .o,$(basename $(TEST_SOURCE_FILES)))
 TEST_LD_FILE = $(wildcard $(PKG_RLM3_HARDWARE_DIR)/*.ld)
 
-VPATH = $(LIBRARY_BUILD_DIR) : $(TEST_SOURCE_DIR) : $(PKG_RLM3_HARDWARE_DIR)
+VPATH = $(LIBRARY_BUILD_DIR) : $(TEST_SOURCE_DIR) : $(PKG_RLM3_HARDWARE_DIR) : $(PKG_LOGGER_DIR)
 
 .PHONY: default library test release clean
 
