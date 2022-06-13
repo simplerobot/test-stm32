@@ -85,19 +85,14 @@ $(TEST_BUILD_DIR)/%.o : %.s Makefile | $(TEST_BUILD_DIR)
 $(TEST_BUILD_DIR) :
 	mkdir -p $@
 
-release : test $(LIBRARY_ALL_FILES:%=$(RELEASE_BUILD_DIR)/%)
+release : test $(LIBRARY_FILES:%=$(RELEASE_DIR)/%)
+	echo $^
 
-$(RELEASE_BUILD_DIR)/% : $(LIBRARY_BUILD_DIR)/% | $(RELEASE_BUILD_DIR) $(RELEASE_BUILD_DIR)/Legacy
+$(RELEASE_DIR)/% : $(LIBRARY_BUILD_DIR)/% | $(RELEASE_DIR)
 	cp $< $@
 	
-$(RELEASE_BUILD_DIR) :
+$(RELEASE_DIR) :
 	mkdir -p $@
-
-$(RELEASE_BUILD_DIR)/Legacy :
-	mkdir -p $@
-
-%.h : ;
-%.hpp : ;
 
 clean:
 	rm -rf $(BUILD_DIR)
