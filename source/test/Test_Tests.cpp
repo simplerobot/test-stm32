@@ -134,3 +134,66 @@ TEST_CASE(ASSERT_Fails_Destructor)
 	ASSERT(!test_case.Run());
 }
 
+static uint32_t g_total_setup_count = 0;
+static uint32_t g_total_teardown_count = 0;
+static uint32_t g_active_count = 0;
+
+TEST_SETUP(COUNTS)
+{
+	g_total_setup_count++;
+	g_active_count++;
+}
+
+TEST_TEARDOWN(COUNTS)
+{
+	ASSERT(g_active_count >= 0);
+	g_total_teardown_count++;
+	g_active_count--;
+}
+
+TEST_CASE(TEST_HELPER_Counts)
+{
+	auto test = []() { ASSERT(g_active_count == 2); };
+	TestCaseListItem test_case(test, "NESTED_TEST", "FILE", 1234);
+
+	ASSERT(g_active_count == 1);
+	ASSERT(test_case.Run());
+	ASSERT(g_active_count == 1);
+}
+
+static bool g_should_start_fn_fail = false;
+static bool g_should_finish_fn_fail = false;
+
+TEST_START(FAILS)
+{
+	if (g_should_start_fn_fail)
+	{
+		g_should_start_fn_fail = false;
+		ASSERT(false);
+	}
+}
+
+TEST_FINISH(FAILS)
+{
+	if (g_should_finish_fn_fail)
+	{
+		g_should_finish_fn_fail = false;
+		ASSERT(false);
+	}
+}
+
+TEST_CASE(TEST_HELPER_Fails)
+{
+	TestCaseListItem test_case([]{}, "ALWAYS_PASSES", "FILE", 1234);
+
+	g_should_start_fn_fail = true;
+	ASSERT(!test_case.Run());
+
+	ASSERT(test_case.Run());
+
+	g_should_finish_fn_fail = true;
+	ASSERT(!test_case.Run());
+}
+
+
+

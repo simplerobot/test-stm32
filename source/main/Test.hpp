@@ -9,17 +9,18 @@
 #error Tests must be compiled with the TEST macro defined.
 #endif
 
+#ifndef __EXCEPTIONS
+#error Tests must be compiled with exception support.
+#endif
+
+
+#include "Assert.h"
+
 
 #define TEST_CASE(X) \
 	void TEST_CASE_ ## X(); \
 	TestCaseListItem _TEST_ ## X(TEST_CASE_ ## X, #X, __FILE__, __LINE__); \
 	void TEST_CASE_ ## X()
-
-
-#define ASSERT(X) ((X) ? (void)0 : NotifyAssertFailed(__FILE__, __LINE__, __PRETTY_FUNCTION__, "ASSERT(%s)", #X))
-#define ASSERT_TRUE(X) ((X) ? (void)0 : NotifyAssertFailed(__FILE__, __LINE__, __PRETTY_FUNCTION__, "ASSERT_TRUE(%s)", #X))
-#define ASSERT_FALSE(X) ((X) ? NotifyAssertFailed(__FILE__, __LINE__, __PRETTY_FUNCTION__, "ASSERT_FALSE(%s)", #X) : (void)0)
-#define ASSERT_THROWS(X) { bool caught_error = false; try { X; } catch (...) { caught_error = true; } if (!caught_error) NotifyAssertFailed(__FILE__, __LINE__, __PRETTY_FUNCTION__, "ASSERT_THROWS(%s)", #X); }
 
 
 class TestCaseListItem
@@ -46,5 +47,42 @@ private:
 };
 
 
-extern void NotifyAssertFailed(const char* file, long line, const char* function, const char* message, ...) __attribute__ ((format (printf, 4, 5)));
+#define TEST_SETUP(X) TEST_HELPER(X, SETUP)
+#define TEST_TEARDOWN(X) TEST_HELPER(X, TEARDOWN)
+#define TEST_START(X) TEST_HELPER(X, START)
+#define TEST_FINISH(X) TEST_HELPER(X, FINISH)
+
+#define TEST_HELPER(NAME, TYPE) \
+	void TEST_ ## TYPE ## _ ## NAME(); \
+	TestHelperListItem _TEST_ ## TYPE ## _ ## NAME(TEST_ ## TYPE ## _ ## NAME, TestHelperListItem::TYPE); \
+	void TEST_ ## TYPE ## _ ## NAME()
+
+
+class TestHelperListItem
+{
+public:
+	enum Type
+	{
+		SETUP,
+		TEARDOWN,
+		START,
+		FINISH,
+	};
+
+	typedef void(*HelperFn)();
+
+	TestHelperListItem(HelperFn fn, Type type);
+	~TestHelperListItem();
+
+	static void Run(Type type);
+
+private:
+	HelperFn m_helper_fn;
+	Type m_type;
+	TestHelperListItem* m_next;
+	TestHelperListItem** m_prev;
+
+	static TestHelperListItem* g_head;
+	static TestHelperListItem** g_tail;
+};
 

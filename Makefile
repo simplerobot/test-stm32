@@ -48,9 +48,11 @@ TEST_LD_FILE = $(wildcard $(PKG_RLM3_HARDWARE_DIR)/*.ld)
 
 VPATH = $(LIBRARY_BUILD_DIR) : $(TEST_SOURCE_DIR) : $(PKG_RLM3_HARDWARE_DIR) : $(PKG_LOGGER_DIR)
 
-.PHONY: default library test release clean
+.PHONY: default all library test release clean
 
-default : release
+default : all
+
+all : release
 
 library : $(LIBRARY_FILES:%=$(LIBRARY_BUILD_DIR)/%)
 
