@@ -7,6 +7,8 @@
 #include "logger.h"
 #include <cstdarg>
 #include <cctype>
+#include "FreeRTOS.h"
+#include "task.h"
 
 
 LOGGER_ZONE(TEST);
@@ -115,6 +117,8 @@ static void ITM_Format(const char* format, ...)
 
 extern void logger_format_message(LoggerLevel level, const char* zone, const char* format, ...)
 {
+	ITM_SendUInt(xTaskGetTickCount());
+	ITM_SendChar(' ');
 	ITM_SendString(ToString(level));
 	ITM_SendChar(' ');
 	ITM_SendString(zone);
