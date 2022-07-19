@@ -11,6 +11,10 @@ LIBRARY_BUILD_DIR = $(BUILD_DIR)/library
 TEST_BUILD_DIR = $(BUILD_DIR)/test
 RELEASE_DIR = $(BUILD_DIR)/release
 
+SOURCE_DIR = source
+MAIN_SOURCE_DIR = $(SOURCE_DIR)/main
+TEST_SOURCE_DIR = $(SOURCE_DIR)/test
+
 CC = $(TOOLCHAIN_PATH)gcc
 AS = $(TOOLCHAIN_PATH)gcc -x assembler-with-cpp
 SZ = $(TOOLCHAIN_PATH)size
@@ -31,13 +35,9 @@ DEFINES = \
 	-DTEST
 	
 INCLUDES = \
-	-I$(LIBRARY_BUILD_DIR) \
+	-I$(MAIN_SOURCE_DIR) \
 	-I$(PKG_RLM3_HARDWARE_DIR) \
 	-I$(PKG_LOGGER_DIR)
-
-SOURCE_DIR = source
-MAIN_SOURCE_DIR = $(SOURCE_DIR)/main
-TEST_SOURCE_DIR = $(SOURCE_DIR)/test
 
 LIBRARY_FILES = $(notdir $(wildcard $(MAIN_SOURCE_DIR)/*))
 
@@ -46,7 +46,7 @@ TEST_SOURCE_FILES = $(notdir $(wildcard $(TEST_SOURCE_DIRS:%=%/*.c) $(TEST_SOURC
 TEST_O_FILES = $(addsuffix .o,$(basename $(TEST_SOURCE_FILES)))
 TEST_LD_FILE = $(wildcard $(PKG_RLM3_HARDWARE_DIR)/*.ld)
 
-VPATH = $(LIBRARY_BUILD_DIR) : $(TEST_SOURCE_DIR) : $(PKG_RLM3_HARDWARE_DIR) : $(PKG_LOGGER_DIR)
+VPATH = $(MAIN_SOURCE_DIR) : $(TEST_SOURCE_DIR) : $(PKG_RLM3_HARDWARE_DIR) : $(PKG_LOGGER_DIR)
 
 .PHONY: default all library test release clean
 

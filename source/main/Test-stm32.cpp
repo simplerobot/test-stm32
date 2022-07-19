@@ -27,10 +27,29 @@ TaskHandle_t g_testing_thread_id = 0;
 
 static void ITM_SendCharSafe(char c)
 {
-	if (isprint(c))
+	if (c == '\\')
+	{
+		ITM_SendChar('\\');
+		ITM_SendChar('\\');
+	}
+	else if (' ' <= c && c <= '~')
+	{
 		ITM_SendChar(c);
+	}
+	else if (c == '\r')
+	{
+		ITM_SendChar('\\');
+		ITM_SendChar('r');
+	}
+	else if (c == '\n')
+	{
+		ITM_SendChar('\\');
+		ITM_SendChar('n');
+	}
 	else
+	{
 		ITM_SendChar('?');
+	}
 }
 
 static void ITM_SendString(const char* str)
@@ -64,14 +83,21 @@ static void ITM_SendInt(int32_t x)
   ITM_SendUInt((uint32_t)x);
 }
 
-static void ITM_SendHex(uint32_t x)
+static char ToHexDigit(uint32_t x, bool uppercase)
 {
-  const char* HEX_DIGITS = "0123456789abcdef";
+	if (x >= 0 && x <= 9)
+		return '0' + x;
+	if (x >= 10 && x <= 15)
+		return (uppercase ? 'A' : 'a') + x - 10;
+	return '?';
+}
+static void ITM_SendHex(uint32_t x, bool uppercase)
+{
   size_t i = 1;
   while (i < 8 && ((x >> (32 - 4 * i)) & 0x0F) == 0)
     i++;
   for (; i <= 8; i++)
-    ITM_SendChar(HEX_DIGITS[(x >> (32 - 4 * i)) & 0x0F]);
+    ITM_SendChar(ToHexDigit((x >> (32 - 4 * i)) & 0x0F, uppercase));
 }
 
 static void ITM_VFormat(const char* format, va_list args)
@@ -82,6 +108,8 @@ static void ITM_VFormat(const char* format, va_list args)
 		if (c == '%')
 		{
 			char f = *(format++);
+			while ((f >= '0' && f <= '9') || (f == 'z') || (f == 'l'))
+				f = *(format++);
 			if (f == 's')
 				ITM_SendString(va_arg(args, const char*));
 			else if (f == 'd')
@@ -89,7 +117,9 @@ static void ITM_VFormat(const char* format, va_list args)
 			else if (f == 'u')
 				ITM_SendUInt(va_arg(args, unsigned int));
 			else if (f == 'x')
-				ITM_SendHex(va_arg(args, unsigned int));
+				ITM_SendHex(va_arg(args, unsigned int), false);
+			else if (f == 'X')
+				ITM_SendHex(va_arg(args, unsigned int), true);
 			else if (f == 'c')
 				ITM_SendCharSafe((char)va_arg(args, int));
 			else if (f == '%')
