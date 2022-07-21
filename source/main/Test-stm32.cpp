@@ -177,12 +177,6 @@ extern "C" void RLM3_Main(void)
 	TestCaseListItem::RunAll();
 }
 
-class AssertFailedException
-{
-public:
-	AssertFailedException() {}
-};
-
 TestCaseListItem::TestCaseListItem(TestCase test, const char* name, const char* file, long line)
 	: m_test(test)
 	, m_name(name)

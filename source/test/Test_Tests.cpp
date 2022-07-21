@@ -86,6 +86,38 @@ TEST_CASE(ASSERT_THROWS_Fails)
 	ASSERT(!test_case.Run());
 }
 
+TEST_CASE(ASSERT_THROWS_Asserts)
+{
+	auto test = []() { ASSERT_THROWS(ASSERT(false)); };
+	TestCaseListItem test_case(test, "TEST_CONSTRUCTOR", "FILE", 1234);
+
+	ASSERT(!test_case.Run());
+}
+
+TEST_CASE(ASSERT_ASSERTS_Passes)
+{
+	auto test = []() { ASSERT_ASSERTS(ASSERT(false)); };
+	TestCaseListItem test_case(test, "TEST_CONSTRUCTOR", "FILE", 1234);
+
+	ASSERT(test_case.Run());
+}
+
+TEST_CASE(ASSERT_ASSERTS_Fails)
+{
+	auto test = []() { ASSERT_ASSERTS(ASSERT(true)); };
+	TestCaseListItem test_case(test, "TEST_CONSTRUCTOR", "FILE", 1234);
+
+	ASSERT(!test_case.Run());
+}
+
+TEST_CASE(ASSERT_ASSERTS_Throws)
+{
+	auto test = []() { ASSERT_ASSERTS(throw std::runtime_error("error")); };
+	TestCaseListItem test_case(test, "TEST_CONSTRUCTOR", "FILE", 1234);
+
+	ASSERT(!test_case.Run());
+}
+
 TEST_CASE(ASSERT_Fails_Secondary_Thread)
 {
 	auto test = []() {
