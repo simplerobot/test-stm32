@@ -9,6 +9,7 @@
 #include <cctype>
 #include "FreeRTOS.h"
 #include "task.h"
+#include "rlm3-string.h"
 
 
 LOGGER_ZONE(TEST);
@@ -24,142 +25,93 @@ static int g_test_depth = 0;
 static bool g_test_failure = false;
 TaskHandle_t g_testing_thread_id = 0;
 
+#define LOG_INTERRUPT_BUFFER_SIZE 256
+static char g_log_interrupt_buffer[LOG_INTERRUPT_BUFFER_SIZE];
+static volatile size_t g_log_interrupt_head = 0;
+static volatile size_t g_log_interrupt_tail = 0;
 
-static void ITM_SendCharSafe(char c)
+
+static void TestFormat(const char* format, ...) __attribute__ ((format (printf, 1, 2)));
+static void TestVFormat(const char* format, va_list args) __attribute__ ((format (printf, 1, 0)));
+
+
+static bool IsIRQ()
 {
-	if (c == '\\')
+	return (__get_IPSR() != 0U);
+}
+
+static void TestWriteChar(char c)
+{
+	if (IsIRQ())
 	{
-		ITM_SendChar('\\');
-		ITM_SendChar('\\');
-	}
-	else if (' ' <= c && c <= '~')
-	{
-		ITM_SendChar(c);
-	}
-	else if (c == '\r')
-	{
-		ITM_SendChar('\\');
-		ITM_SendChar('r');
-	}
-	else if (c == '\n')
-	{
-		ITM_SendChar('\\');
-		ITM_SendChar('n');
+		// Log to the interrupt buffer for later flushing.  We use temporary variables to avoid wrapping issues.
+		size_t head = g_log_interrupt_head;
+		size_t next = head + 1;
+		if (next >= LOG_INTERRUPT_BUFFER_SIZE)
+			next = 0;
+		if (next != g_log_interrupt_tail)
+		{
+			g_log_interrupt_buffer[head] = c;
+			g_log_interrupt_head = next;
+		}
 	}
 	else
 	{
-		ITM_SendChar('?');
+		// Log directly to the test console.
+		ITM_SendChar(c);
 	}
 }
 
-static void ITM_SendString(const char* str)
+static void TestWriteCharToFormat(void* ignore, char c)
 {
-  if (str == NULL)
-	  str = "(null)";
-  while (*str != 0)
-	  ITM_SendCharSafe(*(str++));
+	TestWriteChar(c);
 }
 
-static void ITM_SendUInt(uint32_t x)
+static void TestFlushInterruptLogBuffer()
 {
-  char buffer[10];
-  int count = 0;
-  do
-  {
-    buffer[count++] = '0' + (x % 10);
-    x /= 10;
-  } while (x != 0);
-  for (int i = 0; i < count; i++)
-    ITM_SendChar(buffer[count - i - 1]);
-}
-
-static void ITM_SendInt(int32_t x)
-{
-  if (x < 0)
-  {
-    ITM_SendChar('-');
-    x = -x;
-  }
-  ITM_SendUInt((uint32_t)x);
-}
-
-static char ToHexDigit(uint32_t x, bool uppercase)
-{
-	if (x >= 0 && x <= 9)
-		return '0' + x;
-	if (x >= 10 && x <= 15)
-		return (uppercase ? 'A' : 'a') + x - 10;
-	return '?';
-}
-static void ITM_SendHex(uint32_t x, bool uppercase)
-{
-  size_t i = 1;
-  while (i < 8 && ((x >> (32 - 4 * i)) & 0x0F) == 0)
-    i++;
-  for (; i <= 8; i++)
-    ITM_SendChar(ToHexDigit((x >> (32 - 4 * i)) & 0x0F, uppercase));
-}
-
-static void ITM_VFormat(const char* format, va_list args)
-{
-	while (*format != 0)
+	// While there are characters in the interrupt queue, flush them.  We use temporary variables to avoid wrapping issues and starvation issues.
+	size_t tail = g_log_interrupt_tail;
+	while (g_log_interrupt_head != tail)
 	{
-		char c = *(format++);
-		if (c == '%')
-		{
-			char f = *(format++);
-			while ((f >= '0' && f <= '9') || (f == 'z') || (f == 'l'))
-				f = *(format++);
-			if (f == 's')
-				ITM_SendString(va_arg(args, const char*));
-			else if (f == 'd')
-				ITM_SendInt(va_arg(args, int));
-			else if (f == 'u')
-				ITM_SendUInt(va_arg(args, unsigned int));
-			else if (f == 'x')
-				ITM_SendHex(va_arg(args, unsigned int), false);
-			else if (f == 'X')
-				ITM_SendHex(va_arg(args, unsigned int), true);
-			else if (f == 'c')
-				ITM_SendCharSafe((char)va_arg(args, int));
-			else if (f == '%')
-				ITM_SendChar(f);
-			else
-			{
-				ITM_SendString("[unsupported format ");
-				ITM_SendCharSafe(f);
-				ITM_SendChar(']');
-				return;
-			}
-		}
-		else
-			ITM_SendCharSafe(c);
+		ITM_SendChar(g_log_interrupt_buffer[tail]);
+		if (++tail >= LOG_INTERRUPT_BUFFER_SIZE)
+			tail = 0;
 	}
+	g_log_interrupt_tail = tail;
 }
 
-static void ITM_Format(const char* format, ...)
+static void TestFormat(const char* format, ...)
 {
 	va_list args;
 	va_start(args, format);
-	ITM_VFormat(format, args);
+	RLM3_FnVFormat(TestWriteCharToFormat, nullptr, format, args);
 	va_end(args);
+}
+
+static void TestVFormat(const char* format, va_list args)
+{
+	RLM3_FnVFormat(TestWriteCharToFormat, nullptr, format, args);
 }
 
 extern void logger_format_message(LoggerLevel level, const char* zone, const char* format, ...)
 {
-	ITM_SendUInt(xTaskGetTickCount());
-	ITM_SendChar(' ');
-	ITM_SendString(ToString(level));
-	ITM_SendChar(' ');
-	ITM_SendString(zone);
-	ITM_SendChar(' ');
+	// Flush any messages that were buffered from interrupts.
+	if (!IsIRQ())
+		TestFlushInterruptLogBuffer();
 
+	TickType_t tick_count;
+	if (!IsIRQ())
+		tick_count = xTaskGetTickCount();
+	else
+		tick_count = xTaskGetTickCountFromISR();
+
+	// Write out this message.
+	TestFormat("%u %s %s ", (int)tick_count, ToString(level), zone);
 	va_list args;
 	va_start(args, format);
-	ITM_VFormat(format, args);
+	TestVFormat(format, args);
 	va_end(args);
-
-	ITM_SendChar('\n');
+	TestWriteChar('\n');
 }
 
 static void terminate_fn()
@@ -205,7 +157,9 @@ bool TestCaseListItem::Run()
 	{
 		TestHelperListItem::Run(TestHelperListItem::START);
 		(m_test)();
+		TestFlushInterruptLogBuffer();
 		TestHelperListItem::Run(TestHelperListItem::FINISH);
+		TestFlushInterruptLogBuffer();
 		test_passed = !g_test_failure;
 	}
 	catch (const AssertFailedException& e)
@@ -214,70 +168,59 @@ bool TestCaseListItem::Run()
 	catch (const std::exception& e)
 	{
 		const char* name = typeid(e).name();
-		ITM_Format("FAILED - Test failed with exception %s.  Error: %s", name, e.what());
-		ITM_SendChar('\n');
+		TestFlushInterruptLogBuffer();
+		TestFormat("FAILED - Test failed with exception %s.  Error: %s\n", name, e.what());
 	}
 	catch (...)
 	{
-		ITM_Format("FAILED - Test failed with unknown exception.");
-		ITM_SendChar('\n');
+		TestFlushInterruptLogBuffer();
+		TestFormat("FAILED - Test failed with unknown exception.\n");
 	}
 	g_test_depth--;
 	g_test_failure = false;
 	g_testing_thread_id = 0;
 	TestHelperListItem::Run(TestHelperListItem::TEARDOWN);
+	TestFlushInterruptLogBuffer();
 
 	return test_passed;
 }
 
 bool TestCaseListItem::RunAll()
 {
-	ITM_Format("== RUNNING TEST CASES ==");
-	ITM_SendChar('\n');
+	TestFormat("== RUNNING TEST CASES ==\n");
 
 	size_t total_test_count = 0;
 	size_t passed_test_count = 0;
 
 	for (TestCaseListItem* current_test = g_head; current_test != nullptr; current_test = current_test->m_next)
 	{
-		ITM_Format("=== TEST: %s ===", current_test->m_name);
-		ITM_SendChar('\n');
+		TestFormat("=== TEST: %s ===\n", current_test->m_name);
 
 		total_test_count++;
-
 		if (current_test->Run())
 		{
 			passed_test_count++;
 		}
 		else
 		{
-			ITM_Format("=== TEST FAILED: %s File '%s' line %d ===", current_test->m_name, current_test->m_file, current_test->m_line);
-			ITM_SendChar('\n');
+			TestFormat("=== TEST FAILED: %s File '%s' line %u ===\n", current_test->m_name, current_test->m_file, (unsigned int)current_test->m_line);
 		}
 	}
 
-	ITM_Format("== TEST SUMMARY ==");
-	ITM_SendChar('\n');
-	ITM_Format("%d Total Tests", total_test_count);
-	ITM_SendChar('\n');
-	ITM_Format("%d Tests Passed", passed_test_count);
-	ITM_SendChar('\n');
+	TestFormat("== TEST SUMMARY ==\n");
+	TestFormat("%d Total Test\n", total_test_count);
+	TestFormat("%d Tests Passed\n", passed_test_count);
 	if (total_test_count == passed_test_count)
 	{
-		ITM_Format("== TESTS PASSED ==");
-		ITM_SendChar('\n');
-		ITM_Format("EOT PASS");
-		ITM_SendChar('\n');
+		TestFormat("== TESTS PASSED ==\n");
+		TestFormat("EOT PASS\n");
 		return true;
 	}
 	else
 	{
-		ITM_Format("%d Failed Tests", total_test_count - passed_test_count);
-		ITM_SendChar('\n');
-		ITM_Format("== TESTS FAILED ==");
-		ITM_SendChar('\n');
-		ITM_Format("EOT FAIL");
-		ITM_SendChar('\n');
+		TestFormat("%d Failed Tests\n", total_test_count - passed_test_count);
+		TestFormat("== TESTS FAILED ==\n");
+		TestFormat("EOT FAIL\n");
 		return false;
 	}
 }
@@ -304,15 +247,6 @@ void TestHelperListItem::Run(Type type)
 			(*cursor->m_helper_fn)();
 }
 
-static const char* ShortFileName(const char* filename)
-{
-	const char* result = filename;
-	for (const char* cursor = filename; *cursor != 0; cursor++)
-		if (*cursor == '/' || *cursor == '\\')
-			result = cursor + 1;
-	return result;
-}
-
 static bool is_destructor(const char* function_name)
 {
 	return (std::strstr(function_name, "::~") != nullptr);
@@ -320,6 +254,10 @@ static bool is_destructor(const char* function_name)
 
 extern void NotifyAssertFailed(const char* file, long line, const char* function, const char* message, ...)
 {
+	// Flush any messages that were buffered from interrupts.
+	if (!IsIRQ())
+		TestFlushInterruptLogBuffer();
+
 	bool throw_error = true;
 	const char* failure_type = "ASSERT FAILED";
 
@@ -357,10 +295,15 @@ extern void NotifyAssertFailed(const char* file, long line, const char* function
 
 	va_list args;
 	va_start(args, message);
-	ITM_Format("%s '", failure_type);
-	ITM_VFormat(message, args);
-	ITM_Format("' %s %s:%d", function, ShortFileName(file), line);
-	ITM_SendChar('\n');
+	TestFormat("%s:%ld:1: assert: ‘", file, line);
+	TestVFormat(message, args);
+	TestFormat("‘ %s ", failure_type);
+	if (std::strncmp(function, "TEST_CASE_", 10) == 0)
+		TestFormat("in test: TEST_CASE(%s)", function + 10);
+	else
+		TestFormat("in function: %s", function);
+	TestFormat("\n");
+	va_end(args);
 
 	if (throw_error)
 	{
@@ -370,7 +313,8 @@ extern void NotifyAssertFailed(const char* file, long line, const char* function
 
 extern "C" void __cxa_pure_virtual()
 {
-	ITM_Format("pure virtual\n");
+	TestFormat("pure virtual\n");
+	TestFlushInterruptLogBuffer();
 	while(1);
 }
 
@@ -388,6 +332,7 @@ void operator delete(void* ptr)
 extern "C" void _exit(int result)
 {
 	LOG_FATAL("exit called");
+	TestFlushInterruptLogBuffer();
 	while(1);
 }
 

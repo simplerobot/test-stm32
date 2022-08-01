@@ -1,6 +1,7 @@
 GITHUB_DEPS += simplerobot/build-scripts
 GITHUB_DEPS += simplerobot/hw-test-agent
 GITHUB_DEPS += simplerobot/rlm3-hardware
+GITHUB_DEPS += simplerobot/rlm3-base
 GITHUB_DEPS += simplerobot/logger
 include ../build-scripts/build/release/include.make
 
@@ -34,19 +35,15 @@ DEFINES = \
 	-DSTM32F427xx \
 	-DTEST
 	
-INCLUDES = \
-	-I$(MAIN_SOURCE_DIR) \
-	-I$(PKG_RLM3_HARDWARE_DIR) \
-	-I$(PKG_LOGGER_DIR)
-
 LIBRARY_FILES = $(notdir $(wildcard $(MAIN_SOURCE_DIR)/*))
 
-TEST_SOURCE_DIRS = $(MAIN_SOURCE_DIR) $(TEST_SOURCE_DIR) $(PKG_RLM3_HARDWARE_DIR) $(PKG_LOGGER_DIR)
+TEST_SOURCE_DIRS = $(MAIN_SOURCE_DIR) $(TEST_SOURCE_DIR) $(PKG_RLM3_HARDWARE_DIR) $(PKG_RLM3_BASE_DIR) $(PKG_LOGGER_DIR)
 TEST_SOURCE_FILES = $(notdir $(wildcard $(TEST_SOURCE_DIRS:%=%/*.c) $(TEST_SOURCE_DIRS:%=%/*.cpp) $(TEST_SOURCE_DIRS:%=%/*.s)))
 TEST_O_FILES = $(addsuffix .o,$(basename $(TEST_SOURCE_FILES)))
 TEST_LD_FILE = $(wildcard $(PKG_RLM3_HARDWARE_DIR)/*.ld)
+TEST_INCLUDES = $(TEST_SOURCE_DIRS:%=-I%)
 
-VPATH = $(MAIN_SOURCE_DIR) : $(TEST_SOURCE_DIR) : $(PKG_RLM3_HARDWARE_DIR) : $(PKG_LOGGER_DIR)
+VPATH = $(TEST_SOURCE_DIRS)
 
 .PHONY: default all library test release clean
 
@@ -76,10 +73,10 @@ $(TEST_BUILD_DIR)/test.elf : $(TEST_O_FILES:%=$(TEST_BUILD_DIR)/%)
 	$(SZ) $@
 
 $(TEST_BUILD_DIR)/%.o : %.c Makefile | $(TEST_BUILD_DIR)
-	$(CC) -c $(MCU) $(OPTIONS) $(DEFINES) $(INCLUDES) -MMD -g -Og -gdwarf-2 $< -o $@
+	$(CC) -c $(MCU) $(OPTIONS) $(DEFINES) $(TEST_INCLUDES) -MMD -g -Og -gdwarf-2 $< -o $@
 
 $(TEST_BUILD_DIR)/%.o : %.cpp Makefile | $(TEST_BUILD_DIR)
-	$(CC) -c $(MCU) $(OPTIONS) $(DEFINES) $(INCLUDES) -std=c++11 -MMD -g -Og -gdwarf-2 $< -o $@
+	$(CC) -c $(MCU) $(OPTIONS) $(DEFINES) $(TEST_INCLUDES) -std=c++11 -MMD -g -Og -gdwarf-2 $< -o $@
 
 $(TEST_BUILD_DIR)/%.o : %.s Makefile | $(TEST_BUILD_DIR)
 	$(AS) -c $(MCU) $(OPTIONS) $(DEFINES) -MMD $< -o $@
