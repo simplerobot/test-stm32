@@ -25,14 +25,10 @@ static int g_test_depth = 0;
 static bool g_test_failure = false;
 TaskHandle_t g_testing_thread_id = 0;
 
-#define LOG_INTERRUPT_BUFFER_SIZE 256
-static char g_log_interrupt_buffer[LOG_INTERRUPT_BUFFER_SIZE];
-static volatile size_t g_log_interrupt_head = 0;
-static volatile size_t g_log_interrupt_tail = 0;
-
-
-static void TestFormat(const char* format, ...) __attribute__ ((format (printf, 1, 2)));
-static void TestVFormat(const char* format, va_list args) __attribute__ ((format (printf, 1, 0)));
+#define LOG_BUFFER_SIZE 256
+static char g_log_buffer[LOG_BUFFER_SIZE];
+static volatile size_t g_log_head = 0;
+static volatile size_t g_log_tail = 0;
 
 
 static bool IsIRQ()
@@ -40,78 +36,81 @@ static bool IsIRQ()
 	return (__get_IPSR() != 0U);
 }
 
-static void TestWriteChar(char c)
+static size_t AdvanceLogCursor(size_t cursor)
+{
+	if (cursor >= LOG_BUFFER_SIZE - 1)
+		return 0;
+	return cursor + 1;
+}
+
+static void TestFlushLogBuffer()
 {
 	if (IsIRQ())
+		return;
+
+	size_t head = g_log_head;
+	size_t tail = g_log_tail;
+	while (tail != head)
 	{
-		// Log to the interrupt buffer for later flushing.  We use temporary variables to avoid wrapping issues.
-		size_t head = g_log_interrupt_head;
-		size_t next = head + 1;
-		if (next >= LOG_INTERRUPT_BUFFER_SIZE)
-			next = 0;
-		if (next != g_log_interrupt_tail)
-		{
-			g_log_interrupt_buffer[head] = c;
-			g_log_interrupt_head = next;
-		}
+		ITM_SendChar(g_log_buffer[tail]);
+		tail = AdvanceLogCursor(tail);
 	}
-	else
+	g_log_tail = tail;
+}
+
+static void TestWriteToLogBufferFormatFn(void* ignore, char c)
+{
+	size_t head = g_log_head;
+	size_t next = AdvanceLogCursor(head);
+
+	// If there is room in the buffer, add this character.
+	if (next != g_log_tail)
 	{
-		// Log directly to the test console.
-		ITM_SendChar(c);
+		g_log_buffer[head] = c;
+		g_log_head = next;
 	}
 }
 
-static void TestWriteCharToFormat(void* ignore, char c)
+static void TestWriteToTestConsoleFn(void* ignore, char c)
 {
-	TestWriteChar(c);
-}
-
-static void TestFlushInterruptLogBuffer()
-{
-	// While there are characters in the interrupt queue, flush them.  We use temporary variables to avoid wrapping issues and starvation issues.
-	size_t tail = g_log_interrupt_tail;
-	while (g_log_interrupt_head != tail)
-	{
-		ITM_SendChar(g_log_interrupt_buffer[tail]);
-		if (++tail >= LOG_INTERRUPT_BUFFER_SIZE)
-			tail = 0;
-	}
-	g_log_interrupt_tail = tail;
+	ITM_SendChar(c);
 }
 
 static void TestFormat(const char* format, ...)
 {
+	TestFlushLogBuffer();
 	va_list args;
 	va_start(args, format);
-	RLM3_FnVFormat(TestWriteCharToFormat, nullptr, format, args);
+	RLM3_FnVFormat(TestWriteToTestConsoleFn, nullptr, format, args);
 	va_end(args);
-}
-
-static void TestVFormat(const char* format, va_list args)
-{
-	RLM3_FnVFormat(TestWriteCharToFormat, nullptr, format, args);
 }
 
 extern void logger_format_message(LoggerLevel level, const char* zone, const char* format, ...)
 {
-	// Flush any messages that were buffered from interrupts.
-	if (!IsIRQ())
-		TestFlushInterruptLogBuffer();
+	// NOTE: This is not threadsafe.
 
-	TickType_t tick_count;
-	if (!IsIRQ())
-		tick_count = xTaskGetTickCount();
+	TickType_t tick_count = IsIRQ() ? xTaskGetTickCountFromISR() : xTaskGetTickCount();
+
+	// Decide if output should go to buffer or directly to the test console.
+	RLM3_Format_Fn format_fn;
+	if (IsIRQ() && level < LOGGER_LEVEL_ERROR)
+	{
+		format_fn = TestWriteToLogBufferFormatFn;
+	}
 	else
-		tick_count = xTaskGetTickCountFromISR();
+	{
+		TestFlushLogBuffer();
+		format_fn = TestWriteToTestConsoleFn;
+
+	}
 
 	// Write out this message.
-	TestFormat("%u %s %s ", (int)tick_count, ToString(level), zone);
 	va_list args;
 	va_start(args, format);
-	TestVFormat(format, args);
+	RLM3_FnFormat(format_fn, nullptr, "%u %s %s ", (int)tick_count, ToString(level), zone);
+	RLM3_FnVFormat(format_fn, nullptr, format, args);
+	RLM3_FnFormat(format_fn, nullptr, "\n");
 	va_end(args);
-	TestWriteChar('\n');
 }
 
 static void terminate_fn()
@@ -157,9 +156,7 @@ bool TestCaseListItem::Run()
 	{
 		TestHelperListItem::Run(TestHelperListItem::START);
 		(m_test)();
-		TestFlushInterruptLogBuffer();
 		TestHelperListItem::Run(TestHelperListItem::FINISH);
-		TestFlushInterruptLogBuffer();
 		test_passed = !g_test_failure;
 	}
 	catch (const AssertFailedException& e)
@@ -168,19 +165,18 @@ bool TestCaseListItem::Run()
 	catch (const std::exception& e)
 	{
 		const char* name = typeid(e).name();
-		TestFlushInterruptLogBuffer();
 		TestFormat("FAILED - Test failed with exception %s.  Error: %s\n", name, e.what());
 	}
 	catch (...)
 	{
-		TestFlushInterruptLogBuffer();
+		TestFlushLogBuffer();
 		TestFormat("FAILED - Test failed with unknown exception.\n");
 	}
 	g_test_depth--;
 	g_test_failure = false;
 	g_testing_thread_id = 0;
 	TestHelperListItem::Run(TestHelperListItem::TEARDOWN);
-	TestFlushInterruptLogBuffer();
+	TestFlushLogBuffer();
 
 	return test_passed;
 }
@@ -254,10 +250,6 @@ static bool is_destructor(const char* function_name)
 
 extern void NotifyAssertFailed(const char* file, long line, const char* function, const char* message, ...)
 {
-	// Flush any messages that were buffered from interrupts.
-	if (!IsIRQ())
-		TestFlushInterruptLogBuffer();
-
 	bool throw_error = true;
 	const char* failure_type = "ASSERT FAILED";
 
@@ -293,16 +285,15 @@ extern void NotifyAssertFailed(const char* file, long line, const char* function
 		throw_error = false;
 	}
 
+	// Write out any previous interrupt logs.
+	TestFlushLogBuffer();
+
+	// Write out this message.
 	va_list args;
 	va_start(args, message);
-	TestFormat("%s:%ld:1: assert: ‘", file, line);
-	TestVFormat(message, args);
-	TestFormat("‘ %s ", failure_type);
-	if (std::strncmp(function, "TEST_CASE_", 10) == 0)
-		TestFormat("in test: TEST_CASE(%s)", function + 10);
-	else
-		TestFormat("in function: %s", function);
-	TestFormat("\n");
+	RLM3_FnFormat(TestWriteToTestConsoleFn, nullptr, "%s:%ld:1: assert: ‘", file, line);
+	RLM3_FnVFormat(TestWriteToTestConsoleFn, nullptr, message, args);
+	RLM3_FnFormat(TestWriteToTestConsoleFn, nullptr, "‘ %s in function: %s\n", failure_type, function);
 	va_end(args);
 
 	if (throw_error)
@@ -313,8 +304,7 @@ extern void NotifyAssertFailed(const char* file, long line, const char* function
 
 extern "C" void __cxa_pure_virtual()
 {
-	TestFormat("pure virtual\n");
-	TestFlushInterruptLogBuffer();
+	LOG_FATAL("pure virtual");
 	while(1);
 }
 
@@ -332,7 +322,6 @@ void operator delete(void* ptr)
 extern "C" void _exit(int result)
 {
 	LOG_FATAL("exit called");
-	TestFlushInterruptLogBuffer();
 	while(1);
 }
 

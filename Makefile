@@ -60,7 +60,7 @@ $(LIBRARY_BUILD_DIR) :
 	mkdir -p $@
 
 test : library $(TEST_BUILD_DIR)/test.bin $(TEST_BUILD_DIR)/test.hex
-	$(PKG_HW_TEST_AGENT_DIR)/sr-hw-test-agent --run --test-timeout=15 --trace-frequency=2000000 --board RLM36 --file $(TEST_BUILD_DIR)/test.bin	
+	$(PKG_HW_TEST_AGENT_DIR)/sr-hw-test-agent --run --test-timeout=15 --trace-frequency=2m --board RLM36 --file $(TEST_BUILD_DIR)/test.bin	
 
 $(TEST_BUILD_DIR)/test.bin : $(TEST_BUILD_DIR)/test.elf
 	$(BN) $< $@
@@ -69,7 +69,7 @@ $(TEST_BUILD_DIR)/test.hex : $(TEST_BUILD_DIR)/test.elf
 	$(HX) $< $@
 
 $(TEST_BUILD_DIR)/test.elf : $(TEST_O_FILES:%=$(TEST_BUILD_DIR)/%)
-	$(CC) $(MCU) $(TEST_LD_FILE:%=-T%) -Wl,--gc-sections $^ $(LIBRARIES) -s -o $@ -Wl,-Map=$@.map,--cref
+	$(CC) $(MCU) $(TEST_LD_FILE:%=-T%) -Wl,--gc-sections $^ $(LIBRARIES) -o $@ -Wl,-Map=$@.map,--cref
 	$(SZ) $@
 
 $(TEST_BUILD_DIR)/%.o : %.c Makefile | $(TEST_BUILD_DIR)
